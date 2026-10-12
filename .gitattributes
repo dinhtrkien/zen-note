@@ -1,0 +1,4 @@
+# Keep Swift sources and the transfer-manifest rewrite consistent across hosts.
+* text=auto eol=lf
+*.pdf -text
+*.zip -text

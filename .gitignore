@@ -1,0 +1,12 @@
+# Swift build artifacts and local IDE state
+.build/
+.swiftpm/
+DerivedData/
+*.xcuserstate
+.DS_Store
+
+# Generated transfer archives and synthetic PDFs
+artifacts/
+
+# Agent runtime state is not app source
+.pi/
