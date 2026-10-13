@@ -26,9 +26,13 @@ permissions:
 
 jobs:
   native-ios-compile:
-    name: iOS simulator compile (Swift 5, iOS 16)
+    name: iOS 26 SDK compile (Swift 5 language, iOS 16 minimum)
     runs-on: macos-15
     timeout-minutes: 25
+    env:
+      # Playgrounds 4.7 ships Swift 6 and the iOS 26 SDK. Do not silently use
+      # this runner's older default Xcode 16.4 / iOS 18.5 SDK.
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
     steps:
       - name: Checkout with full history (v1 helper sources come from git)
         uses: actions/checkout@v4
