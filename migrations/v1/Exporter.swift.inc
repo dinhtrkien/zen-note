@@ -169,7 +169,9 @@ private enum V1MigrationCopy {
                 throw CopyError.incomplete("ENUM_UNAVAILABLE: cannot enumerate \(canonicalRoot.path).")
             }
             var paths: [String] = []
-            let prefix = canonicalRoot.path + "/"
+            // Component comparison also avoids trailing-slash ambiguity and
+            // cannot confuse sibling directory names with descendants.
+            let rootComponents = canonicalRoot.pathComponents
             for case let item as URL in enumerator {
                 if item.lastPathComponent == ".DS_Store" { continue }
                 let values = try item.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
@@ -183,10 +185,12 @@ private enum V1MigrationCopy {
                     throw CopyError.incomplete("FILE_NOT_REGULAR: \(item.path), regular=\(String(describing: values.isRegularFile)), directory=\(String(describing: values.isDirectory)).")
                 }
                 let canonicalItem = item.resolvingSymlinksInPath().standardizedFileURL
-                guard canonicalItem.path.hasPrefix(prefix) else {
+                let itemComponents = canonicalItem.pathComponents
+                guard itemComponents.count > rootComponents.count,
+                      Array(itemComponents.prefix(rootComponents.count)) == rootComponents else {
                     throw CopyError.incomplete("FILE_OUTSIDE_LIBRARY: item=\(canonicalItem.path), root=\(canonicalRoot.path).")
                 }
-                paths.append(String(canonicalItem.path.dropFirst(prefix.count)))
+                paths.append(itemComponents.dropFirst(rootComponents.count).joined(separator: "/"))
             }
             if let enumerationError { throw enumerationError }
             return paths.sorted()
@@ -300,9 +304,10 @@ private enum V1MigrationCopy {
         }
 
         return Result {
-            let a = source.resolvingSymlinksInPath().standardizedFileURL.path
-            let b = destination.resolvingSymlinksInPath().standardizedFileURL.path
-            guard a != b, !a.hasPrefix(b + "/"), !b.hasPrefix(a + "/") else { throw CopyError.overlap }
+            let sourceComponents = source.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+            let destinationComponents = destination.resolvingSymlinksInPath().standardizedFileURL.pathComponents
+            guard !sourceComponents.starts(with: destinationComponents),
+                  !destinationComponents.starts(with: sourceComponents) else { throw CopyError.overlap }
             #if canImport(Darwin)
             var coordinationError: NSError?
             var outcome: Result<Receipt, Error>?
