@@ -19,7 +19,7 @@ function replace(oldText, newText) {
 replace('import SwiftUI\nimport UniformTypeIdentifiers\nimport ZenNoteCore',
 `// ONE-TIME V1 MIGRATION: REPLACE the OLD ContentView.swift; do not add a second file.
 // Keep every other v1 source and its Package.swift unchanged. Never paste into v2.
-// THUNK-COMPATIBLE DIAGNOSTIC REVISION: exact copy checks; Result API; local helpers.
+// THUNK-COMPATIBLE PATH-FIX REVISION: canonical file checks; first-selection handoff.
 import Foundation
 import ZenNoteCore
 #if !ZENNOTE_MIGRATION_PORTABLE
@@ -29,7 +29,6 @@ import UniformTypeIdentifiers`);
 replace('    @State private var importing = false',
 `    @State private var importing = false
     @State private var choosingMigrationFolder = false
-    @State private var migrationFolder: URL?
     @StateObject private var migration = V1MigrationController()`);
 // Retain the previous explicit view-selection shape; it was not the cause.
 // The thunk workaround lives in Exporter.swift.inc, not in this UI selection.
@@ -51,18 +50,22 @@ replace('    private var library: some View {',
 replace('ProgressView("Opening your book…")', 'ProgressView(migration.isCopying ? migration.status : "Opening your book…")');
 replace('        .fileImporter(isPresented: $importing',
 `        .sheet(isPresented: $choosingMigrationFolder, onDismiss: {
-            guard let folder = migrationFolder else { return }
-            migrationFolder = nil
-            migration.copy(app: app, to: folder)
+            migration.folderPickerDismissed(app: app)
         }) {
             V1MigrationFolderPicker(onSelect: { folder in
-                migrationFolder = folder
+                migration.folderSelected(folder, app: app)
                 choosingMigrationFolder = false
-            }, onCancel: { migrationFolder = nil; choosingMigrationFolder = false })
+            }, onCancel: {
+                migration.folderSelectionCancelled()
+                choosingMigrationFolder = false
+            })
         }
         .fileImporter(isPresented: $importing`);
 replace('                Button { importing = true } label: { Label("Import PDF", systemImage: "plus") }',
-`                Button { choosingMigrationFolder = true } label: {
+`                Button {
+                    migration.beginFolderChoice()
+                    choosingMigrationFolder = true
+                } label: {
                     Label("Copy library to Files", systemImage: "folder")
                 }.buttonStyle(.bordered)
                     .disabled(!app.libraryAvailable || app.catalog.books.isEmpty)

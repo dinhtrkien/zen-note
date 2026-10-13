@@ -1,6 +1,6 @@
 // ONE-TIME V1 MIGRATION: REPLACE the OLD ContentView.swift; do not add a second file.
 // Keep every other v1 source and its Package.swift unchanged. Never paste into v2.
-// THUNK-COMPATIBLE DIAGNOSTIC REVISION: exact copy checks; Result API; local helpers.
+// THUNK-COMPATIBLE PATH-FIX REVISION: canonical file checks; first-selection handoff.
 import Foundation
 import ZenNoteCore
 #if !ZENNOTE_MIGRATION_PORTABLE
@@ -13,7 +13,6 @@ struct ContentView: View {
     @ObservedObject var app: AppModel
     @State private var importing = false
     @State private var choosingMigrationFolder = false
-    @State private var migrationFolder: URL?
     @StateObject private var migration = V1MigrationController()
 
     var body: some View {
@@ -28,14 +27,15 @@ struct ContentView: View {
         .tint(.teal)
         .disabled(app.busy)
         .sheet(isPresented: $choosingMigrationFolder, onDismiss: {
-            guard let folder = migrationFolder else { return }
-            migrationFolder = nil
-            migration.copy(app: app, to: folder)
+            migration.folderPickerDismissed(app: app)
         }) {
             V1MigrationFolderPicker(onSelect: { folder in
-                migrationFolder = folder
+                migration.folderSelected(folder, app: app)
                 choosingMigrationFolder = false
-            }, onCancel: { migrationFolder = nil; choosingMigrationFolder = false })
+            }, onCancel: {
+                migration.folderSelectionCancelled()
+                choosingMigrationFolder = false
+            })
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.pdf], allowsMultipleSelection: false) { result in
             DispatchQueue.main.async {
@@ -66,7 +66,10 @@ struct ContentView: View {
                     Text("Your textbook. Your notes. Together.").font(.subheadline).foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button { choosingMigrationFolder = true } label: {
+                Button {
+                    migration.beginFolderChoice()
+                    choosingMigrationFolder = true
+                } label: {
                     Label("Copy library to Files", systemImage: "folder")
                 }.buttonStyle(.bordered)
                     .disabled(!app.libraryAvailable || app.catalog.books.isEmpty)
@@ -298,15 +301,55 @@ private final class V1MigrationController: ObservableObject {
     @Published private(set) var isCopying = false
     @Published private(set) var status = "Ready to copy. Choose an empty local Files folder; original data stays here."
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
+    private var selectedFolder: URL?
+    private var pickerDismissed = false
 
-    func copy(app: AppModel, to folder: URL) {
-        guard !app.busy, !isCopying, app.libraryAvailable, app.session == nil else { return }
+    // UIKit may deliver selection either before or after SwiftUI's onDismiss.
+    // Keep both events in this stable controller, consume the URL exactly once,
+    // and never begin copying while the folder picker is still presented.
+    func beginFolderChoice() {
+        selectedFolder = nil
+        pickerDismissed = false
+        status = "Choose an empty local Files folder. Original data stays here."
+    }
+
+    func folderSelected(_ folder: URL, app: AppModel) {
+        selectedFolder = folder
+        status = "Folder selected; waiting for the picker to close…"
+        copyIfReady(app: app)
+    }
+
+    func folderSelectionCancelled() {
+        selectedFolder = nil
+        status = "Folder selection cancelled. Original data was not changed."
+    }
+
+    func folderPickerDismissed(app: AppModel) {
+        pickerDismissed = true
+        copyIfReady(app: app)
+    }
+
+    private func copyIfReady(app: AppModel) {
+        guard pickerDismissed, let folder = selectedFolder else { return }
+        selectedFolder = nil
+        copy(app: app, to: folder)
+    }
+
+    private func copy(app: AppModel, to folder: URL) {
+        guard !app.busy, !isCopying else { return }
+        guard app.libraryAvailable, app.session == nil else {
+            status = "Return to Books with the original library open before copying."
+            app.issue = status
+            return
+        }
         guard !app.catalog.books.isEmpty else {
-            app.issue = "No old books are visible. Stop here; an empty library is not a successful migration."
+            status = "No old books are visible. Stop here; an empty library is not a successful migration."
+            app.issue = status
             return
         }
         guard folder.startAccessingSecurityScopedResource() else {
-            app.issue = "Files did not grant access to this folder. Choose another empty local folder. The original library was not changed."
+            status = "Files did not grant access to this folder. Choose another empty local folder. The original library was not changed."
+            app.issue = status
             return
         }
         isCopying = true
@@ -382,25 +425,34 @@ private enum V1MigrationCopy {
         }
 
         func files(in root: URL) throws -> [String] {
+            // iOS can expose the same sandbox via /var and /private/var aliases.
+            // Enumerate and compare canonical URLs, never mixed raw spellings.
+            let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
             var enumerationError: Error?
-            guard let enumerator = FileManager.default.enumerator(at: root,
+            guard let enumerator = FileManager.default.enumerator(at: canonicalRoot,
                 includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey],
                 errorHandler: { _, error in enumerationError = error; return false }) else {
-                throw CopyError.incomplete("ENUM_UNAVAILABLE: cannot enumerate \(root.path).")
+                throw CopyError.incomplete("ENUM_UNAVAILABLE: cannot enumerate \(canonicalRoot.path).")
             }
             var paths: [String] = []
-            let prefix = root.path + "/"
+            let prefix = canonicalRoot.path + "/"
             for case let item as URL in enumerator {
                 if item.lastPathComponent == ".DS_Store" { continue }
                 let values = try item.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
+                // Check before resolving the item so a symlink cannot be hidden
+                // by canonicalization. Links/special files remain forbidden.
                 guard values.isSymbolicLink != true else {
                     throw CopyError.incomplete("LINK_REJECTED: \(item.lastPathComponent) is a symbolic link.")
                 }
                 if values.isDirectory == true { continue }
-                guard values.isRegularFile == true, item.path.hasPrefix(prefix) else {
-                    throw CopyError.incomplete("FILE_REJECTED: \(item.lastPathComponent) is not a regular file inside the library.")
+                guard values.isRegularFile == true else {
+                    throw CopyError.incomplete("FILE_NOT_REGULAR: \(item.path), regular=\(String(describing: values.isRegularFile)), directory=\(String(describing: values.isDirectory)).")
                 }
-                paths.append(String(item.path.dropFirst(prefix.count)))
+                let canonicalItem = item.resolvingSymlinksInPath().standardizedFileURL
+                guard canonicalItem.path.hasPrefix(prefix) else {
+                    throw CopyError.incomplete("FILE_OUTSIDE_LIBRARY: item=\(canonicalItem.path), root=\(canonicalRoot.path).")
+                }
+                paths.append(String(canonicalItem.path.dropFirst(prefix.count)))
             }
             if let enumerationError { throw enumerationError }
             return paths.sorted()
