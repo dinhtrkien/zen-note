@@ -19,6 +19,7 @@ function replace(oldText, newText) {
 replace('import SwiftUI\nimport UniformTypeIdentifiers\nimport ZenNoteCore',
 `// ONE-TIME V1 MIGRATION: REPLACE the OLD ContentView.swift; do not add a second file.
 // Keep every other v1 source and its Package.swift unchanged. Never paste into v2.
+// THUNK-COMPATIBLE REVISION: copy API returns Result; throwing helpers are local.
 import Foundation
 import ZenNoteCore
 #if !ZENNOTE_MIGRATION_PORTABLE
@@ -30,8 +31,8 @@ replace('    @State private var importing = false',
     @State private var choosingMigrationFolder = false
     @State private var migrationFolder: URL?
     @StateObject private var migration = V1MigrationController()`);
-// Avoid an SDK-dependent ViewBuilder diagnostic at the if/else closing brace.
-// Explicit AnyView returns keep this selection in ordinary Swift control flow.
+// Retain the previous explicit view-selection shape; it was not the cause.
+// The thunk workaround lives in Exporter.swift.inc, not in this UI selection.
 replace(`            if let session = app.session {
                 WorkspaceView(app: app, session: session)
                     .id(session.record.id)
