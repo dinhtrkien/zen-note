@@ -10,6 +10,8 @@ final class DrawingSurface: UIView, PKCanvasViewDelegate {
     private var pendingSave: DispatchWorkItem?
     private var dirty = false
     private var loadFailed = false
+    private var appliedSettings: DrawingSettings?
+    private var strokeGeneration = 0
 
     init(session: BookSession, target: DrawingTarget) {
         self.session = session
@@ -48,15 +50,35 @@ final class DrawingSurface: UIView, PKCanvasViewDelegate {
     func applySettings() {
         guard let session else { return }
         let app = session.app
-        canvas.tool = app.settings.pencilTool
-        canvas.drawingPolicy = app.settings.input == .stylus ? .pencilOnly : .anyInput
-        canvas.drawingGestureRecognizer.isEnabled = !app.navigating && !loadFailed
+        let settings = app.settings
+        // Activity/zoom updates also refresh representables. Do not reset the
+        // active PencilKit tool on every redraw or midway through a stroke.
+        if appliedSettings?.tool != settings.tool || appliedSettings?.activeInk != settings.activeInk || appliedSettings?.width != settings.width {
+            canvas.tool = settings.pencilTool
+        }
+        if settings.input == .stylus {
+            if canvas.drawingPolicy != .pencilOnly { canvas.drawingPolicy = .pencilOnly }
+        } else if canvas.drawingPolicy != .anyInput { canvas.drawingPolicy = .anyInput }
+        appliedSettings = settings
+        let paneVisible: Bool
+        switch target {
+        case .pdf: paneVisible = app.settings.layout != .notes
+        case .note: paneVisible = app.settings.layout != .textbook
+        }
+        let enabled = session.acceptsDrawing && paneVisible && !app.navigating && !loadFailed
+        if canvas.drawingGestureRecognizer.isEnabled != enabled { canvas.drawingGestureRecognizer.isEnabled = enabled }
         // Keep view interaction enabled: ancestors must still receive scrolling
         // and pinching. Do not toggle canvas.isUserInteractionEnabled here.
     }
 
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { flush(); session?.endStroke(self) }
+    }
+
     func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
-        session?.focus(self)
+        strokeGeneration &+= 1
+        session?.beginStroke(self)
     }
 
     func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
@@ -72,7 +94,12 @@ final class DrawingSurface: UIView, PKCanvasViewDelegate {
     func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
         // Save completed strokes promptly; also allow the final delegate change
         // notification to arrive before serializing the drawing.
-        DispatchQueue.main.async { [weak self] in self?.flush() }
+        let generation = strokeGeneration
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.flush()
+            if self.strokeGeneration == generation { self.session?.endStroke(self) }
+        }
     }
 
     func flush() {
@@ -88,11 +115,11 @@ final class DrawingSurface: UIView, PKCanvasViewDelegate {
 
 @MainActor
 final class PaperView: UIView {
-    var paper: PaperStyle = .grid { didSet { setNeedsDisplay() } }
+    var paper: PaperStyle = .grid { didSet { if oldValue != paper { setNeedsDisplay() } } }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = .white
+        backgroundColor = Theme.paperUI
         isOpaque = true
         contentMode = .redraw
     }
@@ -100,10 +127,23 @@ final class PaperView: UIView {
     required init?(coder: NSCoder) { fatalError("Programmatic view") }
 
     override func draw(_ rect: CGRect) {
-        guard paper == .grid, let context = UIGraphicsGetCurrentContext() else { return }
-        context.setStrokeColor(UIColor(red: 0.81, green: 0.86, blue: 0.89, alpha: 1).cgColor)
-        context.setLineWidth(0.5)
+        guard paper != .blank, let context = UIGraphicsGetCurrentContext() else { return }
         let spacing: CGFloat = 24
+        if paper == .dotted {
+            context.setFillColor(Theme.gridUI.cgColor)
+            var y = floor(rect.minY / spacing) * spacing
+            while y <= rect.maxY {
+                var x = floor(rect.minX / spacing) * spacing
+                while x <= rect.maxX {
+                    context.fillEllipse(in: CGRect(x: x - 1, y: y - 1, width: 2, height: 2))
+                    x += spacing
+                }
+                y += spacing
+            }
+            return
+        }
+        context.setStrokeColor(Theme.gridUI.cgColor)
+        context.setLineWidth(0.5)
         var x = floor(rect.minX / spacing) * spacing
         while x <= rect.maxX {
             context.move(to: CGPoint(x: x, y: rect.minY))

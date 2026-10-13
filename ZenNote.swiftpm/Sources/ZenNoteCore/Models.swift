@@ -1,7 +1,23 @@
 import Foundation
 
 public enum PaperStyle: String, Codable, CaseIterable, Sendable {
-    case blank, grid
+    case blank, grid, dotted
+
+    public var title: String {
+        switch self {
+        case .blank: return "Blank"
+        case .grid: return "Grid"
+        case .dotted: return "Dotted grid"
+        }
+    }
+
+    public var symbol: String {
+        switch self {
+        case .blank: return "square"
+        case .grid: return "square.grid.3x3"
+        case .dotted: return "circle.grid.3x3"
+        }
+    }
 }
 
 public struct NoteSheet: Identifiable, Codable, Equatable, Sendable {
@@ -109,9 +125,15 @@ public struct BookRecord: Identifiable, Codable, Equatable, Sendable {
 
 public struct LibraryCatalog: Codable, Equatable, Sendable {
     public var schemaVersion = 1
+    // Optional on disk for v1 compatibility. Assigned once when a library is
+    // attached; identifies it when reconnecting with unsaved changes in memory.
+    public var libraryID: UUID?
     public var books: [BookRecord]
 
-    public init(books: [BookRecord] = []) { self.books = books }
+    public init(books: [BookRecord] = [], libraryID: UUID? = UUID()) {
+        self.books = books
+        self.libraryID = libraryID
+    }
 }
 
 public enum DrawingTarget: Hashable, Sendable {
