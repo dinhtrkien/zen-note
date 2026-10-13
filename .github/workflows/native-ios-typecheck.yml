@@ -1,0 +1,72 @@
+# Native Apple-framework compile gate for the Zen Note Swift Playgrounds package.
+#
+# The Linux swift Docker build only reaches ZenNoteCore because Package.swift
+# gates AppModule behind canImport(AppleProductTypes), so UI code is never
+# typechecked there. This workflow compiles the current app sources and the
+# one-file v1 migration helper against Xcode's iOS simulator SDK instead:
+#   * all current AppModule sources (SwiftUI/UIKit/PDFKit/PencilKit),
+#   * a separately compiled, matching current ZenNoteCore,
+#   * the generated migrations/v1/ContentView.swift helper compiled against the
+#     exact v1 core and remaining v1 AppModule sources.
+# No signing, no Apple developer membership, no tests, no simulator run.
+name: Native iOS compile gate
+
+on:
+  push:
+    branches:
+      - main
+      - agent/native-ci-20261013
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: native-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  native-ios-compile:
+    name: iOS 26 SDK compile (Swift 5 language, iOS 16 minimum)
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      # Playgrounds 4.7 ships Swift 6 and the iOS 26 SDK. Do not silently use
+      # this runner's older default Xcode 16.4 / iOS 18.5 SDK.
+      DEVELOPER_DIR: /Applications/Xcode_26.0.1.app/Contents/Developer
+    steps:
+      - name: Checkout with full history (v1 helper sources come from git)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain and SDK versions
+        run: |
+          node --version
+          swift --version
+          xcodebuild -version
+          xcrun --find swiftc
+          xcrun --sdk iphonesimulator --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-path
+
+      - name: Compile current app and v1 migration helper for the iOS simulator SDK
+        run: bash ci/native-ios-typecheck.sh
+
+      - name: Publish diagnostics summary
+        if: always()
+        run: |
+          if [ -f ci-out/diagnostics-summary.txt ]; then
+            cat ci-out/diagnostics-summary.txt >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload diagnostics summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ios-diagnostics
+          path: ci-out/diagnostics-summary.txt
+          if-no-files-found: ignore
+          retention-days: 7

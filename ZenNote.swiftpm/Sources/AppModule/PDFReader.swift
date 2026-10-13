@@ -7,12 +7,16 @@ import ZenNoteCore
 struct PDFReader: UIViewControllerRepresentable {
     @ObservedObject var session: BookSession
     @ObservedObject var app: AppModel
+    var presented = true
 
     func makeUIViewController(context: Context) -> PDFReaderController {
-        PDFReaderController(session: session)
+        let controller = PDFReaderController(session: session)
+        controller.setPresented(presented)
+        return controller
     }
 
     func updateUIViewController(_ controller: PDFReaderController, context: Context) {
+        controller.setPresented(presented)
         controller.refreshInput()
     }
 
@@ -35,6 +39,8 @@ final class PDFReaderController: UIViewController {
     private var previousSize: CGSize = .zero
     private var restoring = true
     private var stopped = false
+    private var presented = true
+    private let readerID = UUID()
 
     init(session: BookSession) {
         self.session = session
@@ -46,7 +52,7 @@ final class PDFReaderController: UIViewController {
 
     override func loadView() {
         view = pdfView
-        pdfView.backgroundColor = UIColor(white: 0.93, alpha: 1)
+        pdfView.backgroundColor = Theme.backgroundUI
         pdfView.displayMode = .singlePageContinuous
         pdfView.displayDirection = .vertical
         pdfView.displayBox = .cropBox
@@ -62,13 +68,15 @@ final class PDFReaderController: UIViewController {
         scaleObserver = NotificationCenter.default.addObserver(forName: .PDFViewScaleChanged, object: pdfView, queue: .main) { [weak self] _ in
             DispatchQueue.main.async { [weak self] in self?.scheduleTracking() }
         }
-        session.jumpToPage = { [weak self] page in self?.go(to: page) }
-        session.captureReadingPosition = { [weak self] in self?.capturePosition() }
+        session.attachReader(id: readerID,
+            capture: { [weak self] in self?.capturePosition() },
+            jump: { [weak self] page in self?.go(to: page) })
+        pdfView.isUserInteractionEnabled = presented
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard pdfView.bounds.width > 0, pdfView.bounds.height > 0, previousSize != pdfView.bounds.size else { return }
+        guard presented, pdfView.bounds.width > 0, pdfView.bounds.height > 0, previousSize != pdfView.bounds.size else { return }
         let saved = session.state.readingPosition
         previousSize = pdfView.bounds.size
         attachScrollObservation()
@@ -83,7 +91,7 @@ final class PDFReaderController: UIViewController {
         restore(saved)
         // PDFKit finishes its scroll geometry after the layout pass.
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.stopped else { return }
+            guard let self, !self.stopped, self.presented else { return }
             self.attachScrollObservation()
             self.restore(saved)
             self.restoring = false
@@ -91,8 +99,21 @@ final class PDFReaderController: UIViewController {
         }
     }
 
+    func setPresented(_ visible: Bool) {
+        guard presented != visible else { return }
+        if presented, isViewLoaded { capturePosition(); overlays.flush() }
+        presented = visible
+        tracking?.cancel()
+        tracking = nil
+        if isViewLoaded {
+            pdfView.isUserInteractionEnabled = visible
+            if visible { previousSize = .zero; view.setNeedsLayout() }
+        }
+    }
+
     func refreshInput() {
         guard isViewLoaded else { return }
+        pdfView.isUserInteractionEnabled = presented
         pdfView.documentView?.isUserInteractionEnabled = true
         if let scrollView { configureFingerNavigation(scrollView, app: session.app) }
         overlays.refresh()
@@ -118,7 +139,7 @@ final class PDFReaderController: UIViewController {
     }
 
     private func scheduleTracking() {
-        guard !restoring, !stopped, tracking == nil else { return }
+        guard presented, !restoring, !stopped, tracking == nil else { return }
         let work = DispatchWorkItem { [weak self] in
             self?.tracking = nil
             self?.capturePosition()
@@ -128,6 +149,7 @@ final class PDFReaderController: UIViewController {
     }
 
     private func currentPosition() -> ReadingPosition? {
+        guard pdfView.bounds.width > 0, pdfView.bounds.height > 0 else { return nil }
         let center = CGPoint(x: pdfView.bounds.midX, y: pdfView.bounds.midY)
         guard let page = pdfView.page(for: center, nearest: true) else { return nil }
         let index = session.document.index(for: page)
@@ -141,7 +163,7 @@ final class PDFReaderController: UIViewController {
     }
 
     func capturePosition() {
-        guard !restoring, !stopped, let position = currentPosition() else { return }
+        guard presented, !restoring, !stopped, let position = currentPosition() else { return }
         // The page crossing the PDF viewport's center is the active page.
         session.follow(position)
     }
@@ -183,8 +205,7 @@ final class PDFReaderController: UIViewController {
         if let scaleObserver { NotificationCenter.default.removeObserver(scaleObserver) }
         pageObserver = nil
         scaleObserver = nil
-        session.jumpToPage = nil
-        session.captureReadingPosition = nil
+        session.detachReader(id: readerID)
     }
 }
 

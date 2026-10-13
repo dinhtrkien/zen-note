@@ -8,6 +8,19 @@ struct DrawingSettings: Codable, Equatable {
         var title: String { self == .stylus ? "Stylus + finger navigation" : "Touch-style pen fallback" }
     }
     enum Tool: String, Codable, CaseIterable { case pen, eraser, highlighter }
+    enum Layout: String, Codable, CaseIterable {
+        case split, textbook, notes
+        var title: String {
+            switch self { case .split: return "Split view"; case .textbook: return "Textbook fullscreen"; case .notes: return "Notes fullscreen" }
+        }
+        var symbol: String {
+            switch self { case .split: return "rectangle.split.2x1"; case .textbook: return "book"; case .notes: return "pencil.and.outline" }
+        }
+    }
+    enum Toolbar: String, Codable, CaseIterable {
+        case docked, autoHide
+        var title: String { self == .docked ? "Top-docked" : "Auto-hide" }
+    }
     enum Ink: String, Codable, CaseIterable {
         case black, blue, red, green, yellow
         @MainActor var color: UIColor {
@@ -32,6 +45,30 @@ struct DrawingSettings: Codable, Equatable {
     var width: Double = 2.5
     var paper: PaperStyle = .grid
     var divider: Double = 0.5
+    var layout: Layout = .split
+    var zenToolbar: Toolbar = .docked
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case input, tool, ink, markerInk, width, paper, divider, layout, zenToolbar
+    }
+
+    // Added preferences must not make an existing v1 library undecodable.
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        input = try values.decodeIfPresent(Input.self, forKey: .input) ?? .stylus
+        tool = try values.decodeIfPresent(Tool.self, forKey: .tool) ?? .pen
+        ink = try values.decodeIfPresent(Ink.self, forKey: .ink) ?? .black
+        markerInk = try values.decodeIfPresent(Ink.self, forKey: .markerInk) ?? .yellow
+        width = try values.decodeIfPresent(Double.self, forKey: .width) ?? 2.5
+        paper = try values.decodeIfPresent(PaperStyle.self, forKey: .paper) ?? .grid
+        divider = try values.decodeIfPresent(Double.self, forKey: .divider) ?? 0.5
+        layout = try values.decodeIfPresent(Layout.self, forKey: .layout) ?? .split
+        zenToolbar = try values.decodeIfPresent(Toolbar.self, forKey: .zenToolbar) ?? .docked
+        width = min(8, max(1, width.isFinite ? width : 2.5))
+        divider = min(0.72, max(0.28, divider.isFinite ? divider : 0.5))
+    }
 
     @MainActor var pencilTool: PKTool {
         switch tool {

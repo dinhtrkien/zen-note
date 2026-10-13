@@ -1,0 +1,90 @@
+ZEN NOTE — ONE-FILE MIGRATION FROM YOUR OLD V1 PROJECT
+
+This ZIP is NOT a .swiftpm project. Its code files are loose, visible files.
+Use this only in the ORIGINAL old project that still shows your books/notes.
+Do NOT paste it into the new v2 project. Do NOT add a second ContentView file.
+
+1. Finish writing in the old app, return to Books, wait for autosave, then stop
+   running the app. Keep the original project, NAME, and bundle identifier unchanged.
+   In the reported device case, renaming ZenNote to ZenNoteV1 hid the old books;
+   renaming it back to ZenNote restored them. The internal mechanism is unknown.
+   Do not rename the original to distinguish versions. Duplicating project source
+   alone does NOT back up private study data.
+
+2. Transfer ZenNote-v1-Migration.zip to the iPad and extract it in Files.
+   Open ContentView.swift.txt, select all its text, and copy it.
+   The .txt and .swift files contain the SAME complete replacement code.
+   If Files won't let you copy the text, use Apple's Shortcuts app:
+     - Create a shortcut with Select File (single file).
+     - Add Get Text from Input using the selected file.
+     - Add Copy to Clipboard using that text.
+     - Run it and select ContentView.swift.txt.
+   This fallback copies text only. It does not modify any project or notes.
+
+3. Open the ORIGINAL old project in Swift Playgrounds. Open its existing
+   ContentView.swift in the sidebar. Select ALL existing code, delete it, and
+   paste the complete replacement. Change no other file or app setting.
+   Keep an original source copy in case you need to undo the code edit.
+   Verify line 3 starts with THUNK-COMPATIBLE PATH-FIX REVISION. Replace the WHOLE file,
+   including the copy engine at the bottom, not just the SwiftUI body.
+   This also restores the progress indicator removed for diagnosis.
+
+4. Run the ORIGINAL project. Check that your OLD books are still visible.
+   If it fails to compile or the old list is empty, STOP and report the error.
+   Do not delete the project, import replacements, or assume migration worked.
+   This helper still requires a rebuild; sandbox persistence is device-dependent.
+   If compilation still fails, send a FRESH screenshot with the highlighted
+   line, the current file text if possible, and the Swift Playgrounds version.
+   The reported launch failure is PlaygroundBuild.ThunkCompileFailure: generated
+   thunk compilation, which native source compilation does not exercise.
+   This revision keeps throwing helpers local inside a non-throwing Result API
+   to avoid generated member wrappers needing try. The user confirmed this helper
+   now launches and later reported completed export plus v2 reading old books/notes.
+   Restart persistence and full acceptance still need confirmation.
+   Do not delete/reimport the original project to clear an error.
+
+5. In Files, create an EMPTY local folder such as ZenNote-Library in a location
+   outside Swift Playgrounds-owned storage. Choose On My iPad storage where
+   available for offline use. Don't choose the folder containing these ZIP files.
+
+6. Back in the old app's Books screen, tap Copy library to Files. Select that
+   EMPTY folder. Keep the app in front until copying/verification finish.
+   Save errors must be retried first. Existing destination files are refused.
+   PDFs, editable drawings, links, metadata, and preferences are copied.
+   A success message reports the verified book/file counts. Original data is
+   NOT deleted. No success message means no confirmed migration.
+   The diagnostic revision keeps status/results visible on Books after the alert
+   is dismissed. On failure, STOP and send the exact bracketed check code/message
+   (e.g. CATALOG_MISSING, FILE_NOT_REGULAR, FILE_OUTSIDE_LIBRARY). The path-fix
+   revision canonicalizes paths and compares components (including overlap)
+   while retaining regular-file/symlink checks. Folder selection and dismissal
+   are paired in the controller so either callback order starts one copy.
+   Creating a folder alone is not confirmation: press Open/Choose to select it.
+   Do not repeatedly retry,
+   erase destination contents, or continue to v2. Checks have not been weakened.
+
+7. ONLY after verified export, copy the WHOLE exported folder elsewhere as backup.
+   Transfer/extract ZenNote-iPad.zip (the NEW v2 app) separately, without replacing
+   the original project. Give only the NEW project a distinct name, e.g.
+   ZenNote-v2.swiftpm, before its first run. Do not rename the old ZenNote project.
+   Tap Choose Files folder, select the EXISTING exported folder, and confirm
+   Use folder. It opens the library, not an empty one.
+
+8. Check several old notes AND PDF annotations; stop/relaunch and recheck.
+   Keep the original old project until everything is verified. Copy the WHOLE
+   Files library folder to another location after saves finish as a backup.
+
+Future versions can be opened as fresh projects and reconnected to that same
+Files library; no repeated source-by-source migration is needed.
+
+HOST STATUS: This thunk-compatible helper passes portable compiler checks and
+native Apple-framework source compilation in Actions run 38402670300:
+Xcode 26.0.1, Swift 6.2 compiler, iOS 26 simulator SDK, Swift 5 language mode,
+including SwiftUI/UIKit and Darwin file coordination. This gate does NOT
+compile Playgrounds-generated thunks. The exact generated failing call remains
+unavailable; the user confirmed this revision launches on iPad. After the path-fix
+revision they reported migration completed and v2 reads books and notes from
+Files. First-selection timing and copy counts were not separately reported;
+restart persistence/full acceptance remain pending. V2's separate error on
+unwritten sheets is addressed by the 0.2.1 app patch, NOT by repeating this
+one-time migration. No new automated tests or test runs are part of this handoff.

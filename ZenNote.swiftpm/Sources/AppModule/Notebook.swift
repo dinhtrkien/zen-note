@@ -6,9 +6,17 @@ import ZenNoteCore
 struct Notebook: UIViewControllerRepresentable {
     @ObservedObject var session: BookSession
     @ObservedObject var app: AppModel
+    var presented = true
 
-    func makeUIViewController(context: Context) -> NotebookController { NotebookController(session: session) }
-    func updateUIViewController(_ controller: NotebookController, context: Context) { controller.refresh() }
+    func makeUIViewController(context: Context) -> NotebookController {
+        let controller = NotebookController(session: session)
+        controller.setPresented(presented)
+        return controller
+    }
+    func updateUIViewController(_ controller: NotebookController, context: Context) {
+        controller.setPresented(presented)
+        controller.refresh()
+    }
     static func dismantleUIViewController(_ controller: NotebookController, coordinator: ()) { controller.flush() }
 }
 
@@ -19,6 +27,7 @@ final class NotebookController: UIViewController, UIPageViewControllerDataSource
     private let session: BookSession
     private let pager = UIPageViewController(transitionStyle: .scroll, navigationOrientation: .horizontal)
     private var transitioning = false
+    private var presented = true
 
     init(session: BookSession) {
         self.session = session
@@ -42,11 +51,19 @@ final class NotebookController: UIViewController, UIPageViewControllerDataSource
         pager.view.frame = view.bounds
     }
 
+    func setPresented(_ visible: Bool) {
+        guard presented != visible else { return }
+        if presented, isViewLoaded { flush() }
+        presented = visible
+        if isViewLoaded { view.isUserInteractionEnabled = visible }
+    }
+
     func refresh() {
-        guard isViewLoaded else { return }
+        guard isViewLoaded, presented else { return }
+        view.isUserInteractionEnabled = true
         configurePagerInput()
         if transitioning { return }
-        let page = session.activePage, sheet = session.selectedSheet
+        let page = session.notePage, sheet = session.selectedSheet
         if let current = pager.viewControllers?.first as? NoteSheetController,
            current.pdfPage == page, current.sheet.id == sheet.id {
             current.refresh(sheet: sheet)
@@ -83,7 +100,7 @@ final class NotebookController: UIViewController, UIPageViewControllerDataSource
     }
 
     private func neighbor(of controller: UIViewController, delta: Int) -> UIViewController? {
-        guard let current = controller as? NoteSheetController, current.pdfPage == session.activePage else { return nil }
+        guard let current = controller as? NoteSheetController, current.pdfPage == session.notePage else { return nil }
         let sheets = session.sheets(on: current.pdfPage)
         guard let index = sheets.firstIndex(where: { $0.id == current.sheet.id }), sheets.indices.contains(index + delta) else { return nil }
         return makeController(page: current.pdfPage, sheet: sheets[index + delta])
@@ -98,6 +115,7 @@ final class NotebookController: UIViewController, UIPageViewControllerDataSource
     }
 
     func pageViewController(_ pageViewController: UIPageViewController, willTransitionTo pendingViewControllers: [UIViewController]) {
+        session.activity()
         transitioning = true
         flush()
     }
@@ -106,7 +124,7 @@ final class NotebookController: UIViewController, UIPageViewControllerDataSource
                             previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
         transitioning = false
         if completed, let current = pageViewController.viewControllers?.first as? NoteSheetController,
-           current.pdfPage == session.activePage {
+           current.pdfPage == session.notePage {
             session.selectSheet(current.sheet.id, on: current.pdfPage)
         }
         refresh()
@@ -142,14 +160,14 @@ private final class NoteSheetController: UIViewController, UIScrollViewDelegate 
 
     override func loadView() {
         view = scroll
-        scroll.backgroundColor = UIColor(white: 0.93, alpha: 1)
+        scroll.backgroundColor = Theme.backgroundUI
         scroll.delegate = self
         scroll.bouncesZoom = false
         scroll.showsHorizontalScrollIndicator = false
         scroll.showsVerticalScrollIndicator = false
         paper.paper = sheet.paper
         paper.layer.borderWidth = 0.5
-        paper.layer.borderColor = UIColor.lightGray.cgColor
+        paper.layer.borderColor = Theme.gridUI.cgColor
         scroll.addSubview(paper)
         surface.frame = paper.bounds
         paper.addSubview(surface)
@@ -159,7 +177,8 @@ private final class NoteSheetController: UIViewController, UIScrollViewDelegate 
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        guard scroll.bounds.width > 24, scroll.bounds.height > 24, previousSize != scroll.bounds.size else { centerPaper(); return }
+        guard scroll.bounds.width > 24, scroll.bounds.height > 24 else { return }
+        guard previousSize != scroll.bounds.size else { centerPaper(); return }
         previousSize = scroll.bounds.size
         let ratio = fitScale > 0 ? scroll.zoomScale / fitScale : 1
         fitScale = min((scroll.bounds.width - 24) / Self.paperSize.width, (scroll.bounds.height - 24) / Self.paperSize.height)
@@ -194,8 +213,15 @@ private final class NoteSheetController: UIViewController, UIScrollViewDelegate 
 
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { paper }
 
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) { session.activity() }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        if scrollView.isDragging || scrollView.isDecelerating { session.activity() }
+    }
+
     func scrollViewDidZoom(_ scrollView: UIScrollView) {
         guard !fitting else { return }
+        if scrollView.isZooming { session.activity() }
         centerPaper()
         refresh(sheet: sheet)
     }
