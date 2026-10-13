@@ -165,10 +165,28 @@ public struct DiskStore: Sendable {
     }
 
     private func checkedURL(_ path: String, root: URL) throws -> URL {
-        guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"),
-              !path.split(separator: "/").contains("..") else { throw StorageError.unsafePath }
-        let url = root.appendingPathComponent(path).standardizedFileURL
-        guard url.path.hasPrefix(root.standardizedFileURL.path + "/") else { throw StorageError.unsafePath }
+        let components = path.split(separator: "/")
+        guard root.isFileURL, !components.isEmpty, !path.hasPrefix("/"),
+              !path.contains("\\"), !path.contains("\0"),
+              !components.contains(".."), !components.contains(".") else { throw StorageError.unsafePath }
+
+        // Normalize the existing root ONCE, not a nonexistent drawing path.
+        // Foundation can standardize existing and missing paths differently
+        // (notably /var vs /private/var). Missing sidecars are normal: viewing
+        // an unwritten sheet must return nil without creating a file.
+        let base = root.resolvingSymlinksInPath()
+        var url = base
+        for component in components {
+            url.appendPathComponent(String(component))
+            // Allow system aliases in the selected root, not links inside the
+            // library that could redirect a read/write outside that root.
+            if (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil {
+                throw StorageError.unsafePath
+            }
+        }
+        let baseComponents = base.pathComponents, itemComponents = url.pathComponents
+        guard itemComponents.count > baseComponents.count,
+              itemComponents.starts(with: baseComponents) else { throw StorageError.unsafePath }
         return url
     }
 }
