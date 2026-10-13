@@ -1,6 +1,6 @@
 // ONE-TIME V1 MIGRATION: REPLACE the OLD ContentView.swift; do not add a second file.
 // Keep every other v1 source and its Package.swift unchanged. Never paste into v2.
-// THUNK-COMPATIBLE REVISION: copy API returns Result; throwing helpers are local.
+// THUNK-COMPATIBLE DIAGNOSTIC REVISION: exact copy checks; Result API; local helpers.
 import Foundation
 import ZenNoteCore
 #if !ZENNOTE_MIGRATION_PORTABLE
@@ -74,7 +74,7 @@ struct ContentView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!app.libraryAvailable)
             }.padding(24)
-            Text("Migration helper: choose an EMPTY local folder outside Playgrounds. The original library stays here. Keep the app open until copying and verification finish.")
+            Text(migration.status)
                 .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.bottom, 12)
             saveFailure
             if !app.libraryAvailable {
@@ -296,7 +296,7 @@ private struct V1MigrationFolderPicker: UIViewControllerRepresentable {
 @MainActor
 private final class V1MigrationController: ObservableObject {
     @Published private(set) var isCopying = false
-    @Published private(set) var status = "Copying and verifying your library…"
+    @Published private(set) var status = "Ready to copy. Choose an empty local Files folder; original data stays here."
     private var backgroundTask = UIBackgroundTaskIdentifier.invalid
 
     func copy(app: AppModel, to folder: URL) {
@@ -340,7 +340,7 @@ private final class V1MigrationController: ObservableObject {
                     case .success(let receipt):
                         finish(app: app, folder: folder, message: "Copied and byte-verified \(receipt.books) books and \(receipt.files) files into “\(folder.lastPathComponent)”. Original data is retained. Now open the NEW Zen Note project, choose this EXISTING folder, and check your notes before deleting anything.")
                     case .failure(let error):
-                        finish(app: app, folder: folder, message: "Copy failed: \(error.localizedDescription) Your original library was not deleted. Keep this project and retry with an empty local folder.")
+                        finish(app: app, folder: folder, message: "Copy failed: \(error.localizedDescription) Original data was not deleted. Keep this project and destination unchanged, and report this exact message before retrying.")
                     }
                 }
             }
@@ -351,6 +351,7 @@ private final class V1MigrationController: ObservableObject {
         folder.stopAccessingSecurityScopedResource()
         endBackgroundTask()
         isCopying = false
+        status = message
         app.busy = false
         app.issue = message
     }
@@ -372,7 +373,8 @@ private enum V1MigrationCopy {
     // Playgrounds generates thunks for declarations in SwiftUI source files.
     // Keep the member API non-throwing: generated forwarding calls then need no
     // `try`. Throwing implementation helpers are local, not type members.
-    // This is a thunk-compatibility workaround, pending on-device confirmation.
+    // The user confirmed this thunk-compatible shape launches on iPad.
+    // Export errors remain explicit; no partial library is treated as success.
     static func copy(from source: URL, to destination: URL, expectedBookIDs: Set<UUID>) -> Result<Receipt, Error> {
         func contents(_ root: URL) throws -> [URL] {
             try FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
@@ -383,15 +385,21 @@ private enum V1MigrationCopy {
             var enumerationError: Error?
             guard let enumerator = FileManager.default.enumerator(at: root,
                 includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey],
-                errorHandler: { _, error in enumerationError = error; return false }) else { throw CopyError.incomplete }
+                errorHandler: { _, error in enumerationError = error; return false }) else {
+                throw CopyError.incomplete("ENUM_UNAVAILABLE: cannot enumerate \(root.path).")
+            }
             var paths: [String] = []
             let prefix = root.path + "/"
             for case let item as URL in enumerator {
                 if item.lastPathComponent == ".DS_Store" { continue }
                 let values = try item.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey])
-                guard values.isSymbolicLink != true else { throw CopyError.incomplete }
+                guard values.isSymbolicLink != true else {
+                    throw CopyError.incomplete("LINK_REJECTED: \(item.lastPathComponent) is a symbolic link.")
+                }
                 if values.isDirectory == true { continue }
-                guard values.isRegularFile == true, item.path.hasPrefix(prefix) else { throw CopyError.incomplete }
+                guard values.isRegularFile == true, item.path.hasPrefix(prefix) else {
+                    throw CopyError.incomplete("FILE_REJECTED: \(item.lastPathComponent) is not a regular file inside the library.")
+                }
                 paths.append(String(item.path.dropFirst(prefix.count)))
             }
             if let enumerationError { throw enumerationError }
@@ -413,11 +421,25 @@ private enum V1MigrationCopy {
 
         func validate(_ catalog: LibraryCatalog, in disk: DiskStore) throws {
             for book in catalog.books {
-                guard let data = try disk.read(disk.bookPath(book.id, "state.json")) else { throw CopyError.incomplete }
-                let state = try JSONDecoder().decode(BookState.self, from: data)
-                guard state.schemaVersion == 1 else { throw CopyError.incomplete }
-                let pdf = try disk.pdfURL(for: book.id).resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
-                guard pdf.isRegularFile == true, pdf.isSymbolicLink != true, (pdf.fileSize ?? 0) > 0 else { throw CopyError.incomplete }
+                guard let data = try disk.read(disk.bookPath(book.id, "state.json")) else {
+                    throw CopyError.incomplete("BOOK_STATE_MISSING: books/\(book.id.uuidString)/state.json is absent in \(disk.root.path).")
+                }
+                let state: BookState
+                do { state = try JSONDecoder().decode(BookState.self, from: data) }
+                catch {
+                    throw CopyError.incomplete("BOOK_STATE_UNREADABLE: book \(book.id.uuidString): \(error.localizedDescription)")
+                }
+                guard state.schemaVersion == 1 else {
+                    throw CopyError.incomplete("BOOK_STATE_VERSION: book \(book.id.uuidString) has schema \(state.schemaVersion), expected 1.")
+                }
+                let pdf: URLResourceValues
+                do { pdf = try disk.pdfURL(for: book.id).resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]) }
+                catch {
+                    throw CopyError.incomplete("PDF_UNREADABLE: book \(book.id.uuidString): \(error.localizedDescription)")
+                }
+                guard pdf.isRegularFile == true, pdf.isSymbolicLink != true, (pdf.fileSize ?? 0) > 0 else {
+                    throw CopyError.incomplete("PDF_INVALID: book \(book.id.uuidString), regular=\(String(describing: pdf.isRegularFile)), link=\(String(describing: pdf.isSymbolicLink)), bytes=\(String(describing: pdf.fileSize)).")
+                }
             }
         }
 
@@ -426,11 +448,25 @@ private enum V1MigrationCopy {
             guard destinationValues.isDirectory == true, destinationValues.isSymbolicLink != true else { throw CopyError.unavailable }
             guard try contents(destination).isEmpty else { throw CopyError.notEmpty }
             let disk = DiskStore(root: source)
-            guard let index = try disk.read("library.json") else { throw CopyError.incomplete }
-            let catalog = try JSONDecoder().decode(LibraryCatalog.self, from: index)
-            guard catalog.schemaVersion == 1, !catalog.books.isEmpty,
-                  Set(catalog.books.map(\.id)) == expectedBookIDs,
-                  expectedBookIDs.count == catalog.books.count else { throw CopyError.incomplete }
+            guard let index = try disk.read("library.json") else {
+                throw CopyError.incomplete("CATALOG_MISSING: library.json is absent in \(source.path); visible books=\(expectedBookIDs.count).")
+            }
+            let catalog: LibraryCatalog
+            do { catalog = try JSONDecoder().decode(LibraryCatalog.self, from: index) }
+            catch { throw CopyError.incomplete("CATALOG_UNREADABLE: \(error.localizedDescription)") }
+            guard catalog.schemaVersion == 1 else {
+                throw CopyError.incomplete("CATALOG_VERSION: schema \(catalog.schemaVersion), expected 1.")
+            }
+            guard !catalog.books.isEmpty else {
+                throw CopyError.incomplete("CATALOG_EMPTY: disk has zero books; visible books=\(expectedBookIDs.count).")
+            }
+            let storedIDs = Set(catalog.books.map(\.id))
+            guard storedIDs.count == catalog.books.count else {
+                throw CopyError.incomplete("CATALOG_DUPLICATE_IDS: \(catalog.books.count) records but \(storedIDs.count) distinct book IDs.")
+            }
+            guard storedIDs == expectedBookIDs else {
+                throw CopyError.incomplete("CATALOG_ID_MISMATCH: disk books=\(storedIDs.count), visible books=\(expectedBookIDs.count), missing on disk=\(expectedBookIDs.subtracting(storedIDs).count), unexpected on disk=\(storedIDs.subtracting(expectedBookIDs).count).")
+            }
             try validate(catalog, in: disk)
             // Reject links/special files BEFORE copying. Also freezes the relative
             // file list so changes to the source can be detected during verification.
@@ -497,13 +533,14 @@ private enum V1MigrationCopy {
     }
 
     private enum CopyError: LocalizedError {
-        case notEmpty, unavailable, overlap, incomplete, changed, cleanup(String)
+        case notEmpty, unavailable, overlap, changed
+        case incomplete(String), cleanup(String)
         var errorDescription: String? {
             switch self {
             case .notEmpty: return "Choose an EMPTY folder. No existing library or other files will be overwritten."
             case .unavailable: return "Files could not provide a writable folder."
             case .overlap: return "Choose a separate destination, not the original library or its parent/child folders."
-            case .incomplete: return "The original library is incomplete, unreadable, or does not match the visible books. Stop rather than copying an empty or partial library."
+            case .incomplete(let detail): return "Library check failed [\(detail)] Stop rather than copying an empty or partial library."
             case .changed: return "The files changed during copying or verification did not match. Nothing was reported as a successful copy."
             case .cleanup(let message): return message
             }

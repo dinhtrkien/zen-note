@@ -19,7 +19,7 @@ function replace(oldText, newText) {
 replace('import SwiftUI\nimport UniformTypeIdentifiers\nimport ZenNoteCore',
 `// ONE-TIME V1 MIGRATION: REPLACE the OLD ContentView.swift; do not add a second file.
 // Keep every other v1 source and its Package.swift unchanged. Never paste into v2.
-// THUNK-COMPATIBLE REVISION: copy API returns Result; throwing helpers are local.
+// THUNK-COMPATIBLE DIAGNOSTIC REVISION: exact copy checks; Result API; local helpers.
 import Foundation
 import ZenNoteCore
 #if !ZENNOTE_MIGRATION_PORTABLE
@@ -68,7 +68,7 @@ replace('                Button { importing = true } label: { Label("Import PDF"
                     .disabled(!app.libraryAvailable || app.catalog.books.isEmpty)
                 Button { importing = true } label: { Label("Import PDF", systemImage: "plus") }`);
 replace('            saveFailure\n',
-`            Text("Migration helper: choose an EMPTY local folder outside Playgrounds. The original library stays here. Keep the app open until copying and verification finish.")
+`            Text(migration.status)
                 .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.bottom, 12)
             saveFailure
 `);
