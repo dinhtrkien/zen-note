@@ -22,11 +22,17 @@ Do NOT paste it into the new v2 project. Do NOT add a second ContentView file.
    ContentView.swift in the sidebar. Select ALL existing code, delete it, and
    paste the complete replacement. Change no other file or app setting.
    Keep an original source copy in case you need to undo the code edit.
+   After pasting, verify the body is replaced: inside `var body`'s `ZStack` the
+   first line reads `mainContent`, and no `if let session = app.session` block
+   remains there.
 
 4. Run the ORIGINAL project. Check that your OLD books are still visible.
    If it fails to compile or the old list is empty, STOP and report the error.
    Do not delete the project, import replacements, or assume migration worked.
    This helper still requires a rebuild; sandbox persistence is device-dependent.
+   If the previous closing-brace error bubble is still visible after a full
+   replacement, press Stop, close the project from the Playgrounds Home screen,
+   reopen it, and run again before reporting it.
 
 5. In Files, create an EMPTY local folder such as ZenNote-Library in a location
    outside Swift Playgrounds-owned storage. Choose On My iPad storage where
@@ -50,6 +56,8 @@ Do NOT paste it into the new v2 project. Do NOT add a second ContentView file.
 Future versions can be opened as fresh projects and reconnected to that same
 Files library; no repeated source-by-source migration is needed.
 
-HOST STATUS: Portable compilation/syntax checks only. Apple framework build,
-folder permissions, and live data persistence must be checked on your iPad.
-No new automated tests or test runs are part of this handoff.
+HOST STATUS: The helper passes a native Apple-framework compile check on a macOS
+runner (Xcode 16.4, iOS 18.5 simulator SDK, Swift 5 mode), including the
+SwiftUI/UIKit branch and the NSFileCoordinator path. Folder permissions, the
+actual copy/verification, and live data persistence must still be checked on
+your iPad. No new automated tests or test runs are part of this handoff.
